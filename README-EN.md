@@ -5,7 +5,63 @@ Architecture design: [`DOCS/WORKFLOW.md`](DOCS/WORKFLOW.md) | Dataset reference:
 
 ---
 
-## 1. Dataset Download
+## 1. Software Usage (GUI)
+
+### 1.1 Setup and Launch
+
+```bash
+# Optional: create a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install runtime dependencies
+pip install -U pip
+pip install PyQt5 pyqtgraph numpy scipy pandas
+
+# Launch GUI
+python3 run.py
+# or
+PYTHONPATH=src python3 -m emg_analyser
+```
+
+### 1.2 Page 1: Raw Timeline (Self-Collected Data)
+
+1. Click `Data Folder` and select your data directory.
+2. Click `MVC Folder` and select an MVC directory (must contain `Channel_Curves-*.csv`).
+3. Tune `Display Pipeline` (`Highpass / Smoothing / Cutoff / Window`) for live updates.
+4. Drag the blue selection region on the plots to define the segmentation window.
+5. Click `→ Gait Cycle Segmentation` to enter Page 2.
+
+### 1.3 Page 2: Gait Cycle Segmentation
+
+1. In `Segmentation`, configure `Method` (`autocorr` or `heelstrike`), `Ref. muscle`, and `Period min/max`.
+2. In `Display`, select normalization (`mvc_env95 / task_env95 / off`) and optional individual-cycle overlay.
+3. Parameter changes trigger automatic re-segmentation and redraw.
+4. `Cycle Stats` and the bottom status bar show summary metrics; use `Export PNG` to save the figure.
+
+### 1.4 Page 3: Camargo Dataset
+
+1. Click the folder button in `Dataset` and choose the Camargo root (e.g., `.../Camargo2021`).
+2. Click `Scan Dataset`.
+3. Select `Activity`, `Subject`, and configure `Segmentation` + `Filter Chain`.
+4. Click `Run Analysis`.
+5. Re-analysis runs only when `Run Analysis` is clicked (parameter edits alone do not trigger analysis).
+6. `Display` and `Muscles` checkboxes only change what is drawn; they do not re-run analysis.
+
+### 1.5 Common Paths and Warnings
+
+- MyoMetrics:
+  - `Data Folder`: session parent directory or a single session directory.
+  - `MVC Folder`: MVC session directory or its parent.
+- Camargo:
+  - In Page 3, choose the `Camargo2021` root, not a nested `ABxx/.../emg` folder.
+- Common warnings:
+  - `No recognised dataset found`: selected data path does not match a supported folder structure.
+  - `Selected MVC folder has no Channel_Curves CSV`: wrong MVC folder was selected.
+
+---
+
+## 2. Dataset Download
 
 ### Dataset Overview
 
@@ -117,7 +173,7 @@ The script is **idempotent** and can be interrupted and re-run at any time:
 
 ---
 
-## 2. Project Structure
+## 3. Project Structure
 
 ```
 EMG-Data-Analyser/
