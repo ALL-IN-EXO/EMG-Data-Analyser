@@ -1,4 +1,5 @@
 from __future__ import annotations
+from html import escape
 import random
 
 import numpy as np
@@ -15,6 +16,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -144,21 +146,31 @@ class Page2GaitCycle(QWidget):
         form2.setSpacing(4)
 
         self._combo_norm = QComboBox()
-        self._combo_norm.addItems(["task_env95", "off"])
+        self._combo_norm.addItems(["mvc_env95", "task_env95", "off"])
         form2.addRow("Normalize:", self._combo_norm)
 
         self._chk_individuals = QCheckBox("Show individuals (≤30)")
         form2.addRow(self._chk_individuals)
 
         layout.addWidget(grp_disp)
+
+        grp_stats = QGroupBox("Cycle Stats")
+        stats_layout = QVBoxLayout(grp_stats)
+        stats_layout.setContentsMargins(4, 4, 4, 4)
+        self._txt_cycle_stats = QTextEdit()
+        self._txt_cycle_stats.setReadOnly(True)
+        self._txt_cycle_stats.setFixedHeight(170)
+        stats_layout.addWidget(self._txt_cycle_stats)
+        layout.addWidget(grp_stats)
+
         layout.addStretch(1)
 
         # Connect
-        self._combo_method.currentTextChanged.connect(self._seg_timer.start)
-        self._combo_ref.currentTextChanged.connect(self._seg_timer.start)
-        self._spin_min.valueChanged.connect(self._seg_timer.start)
-        self._spin_max.valueChanged.connect(self._seg_timer.start)
-        self._combo_norm.currentTextChanged.connect(self._seg_timer.start)
+        self._combo_method.currentTextChanged.connect(self._schedule_segmentation)
+        self._combo_ref.currentTextChanged.connect(self._schedule_segmentation)
+        self._spin_min.valueChanged.connect(self._schedule_segmentation)
+        self._spin_max.valueChanged.connect(self._schedule_segmentation)
+        self._combo_norm.currentTextChanged.connect(self._schedule_segmentation)
         self._chk_individuals.toggled.connect(self._redraw_individuals)
 
         return panel
@@ -171,6 +183,7 @@ class Page2GaitCycle(QWidget):
         channels = list(trial.channels.keys())
         self._combo_ref.clear()
         self._combo_ref.addItems(channels)
+        self._txt_cycle_stats.setHtml("<span style='color:#666;'>No cycles</span>")
 
     def set_info(self, subject: str, trial_id: str, t_start: float, t_end: float) -> None:
         self._lbl_info.setText(
@@ -184,11 +197,19 @@ class Page2GaitCycle(QWidget):
     def display_cycles(self, cycle_set: CycleSet) -> None:
         self._cycle_set = cycle_set
         self._build_cycle_plots(cycle_set)
+        self._update_cycle_stats(cycle_set)
         self._btn_export_png.setEnabled(cycle_set.n_cycles > 0)
         if cycle_set.n_cycles > 0:
+            p95_vals = [
+                float(np.percentile(mat.mean(axis=0), 95))
+                for mat in cycle_set.cycles.values()
+            ]
+            scale_hint = float(np.mean(p95_vals)) if p95_vals else 0.0
             self._lbl_stats.setText(
                 f"Detected: {cycle_set.n_cycles} cycles  |  "
                 f"{cycle_set.mean_duration:.3f} ± {cycle_set.std_duration:.3f} s"
+                f"  |  norm={self._combo_norm.currentText()} "
+                f"(mean-p95≈{scale_hint:.3f})"
             )
         else:
             self._lbl_stats.setText("No cycles detected — adjust parameters")
@@ -225,6 +246,9 @@ class Page2GaitCycle(QWidget):
             pi = self._glw.addPlot(row=row, col=0)
             pi.showGrid(x=False, y=True, alpha=0.3)
             pi.setLabel("left", ch)
+            pi.enableAutoRange(axis="y", enable=False)
+            pi.setYRange(0.0, 1.0, padding=0.0)
+            pi.setLimits(yMin=0.0, yMax=1.0)
             if row < len(ch_names) - 1:
                 pi.getAxis("bottom").setStyle(showValues=False)
             else:
@@ -284,6 +308,33 @@ class Page2GaitCycle(QWidget):
     # ------------------------------------------------------------------
     def _emit_seg_config(self) -> None:
         self.segConfigChanged.emit(self.current_seg_config())
+
+    def _schedule_segmentation(self, *_args) -> None:
+        self._seg_timer.start()
+
+    def _update_cycle_stats(self, cs: CycleSet) -> None:
+        if cs.n_cycles == 0 or not cs.cycles:
+            self._txt_cycle_stats.setHtml("<span style='color:#666;'>No cycles</span>")
+            return
+
+        lines = [
+            (
+                "<span style='color:#444;'>"
+                f"n={cs.n_cycles}, dur={cs.mean_duration:.3f}±{cs.std_duration:.3f}s"
+                "</span>"
+            )
+        ]
+        for i, (ch, mat) in enumerate(cs.cycles.items()):
+            peak_each = np.max(np.abs(mat), axis=1)
+            rms_each = np.sqrt(np.mean(mat ** 2, axis=1))
+            color = _CHANNEL_COLORS[i % len(_CHANNEL_COLORS)]
+            lines.append(
+                f"<span style='color:{color};'>"
+                f"{escape(ch)}: peak {peak_each.mean():.3f}±{peak_each.std():.3f}, "
+                f"rms {rms_each.mean():.3f}±{rms_each.std():.3f}"
+                f"</span>"
+            )
+        self._txt_cycle_stats.setHtml("<br/>".join(lines))
 
     def _export_png(self) -> None:
         from PyQt5.QtWidgets import QFileDialog

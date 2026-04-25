@@ -1,0 +1,5 @@
+﻿"type","name","time_units","begin_time","frequency","count","units"
+"signal","","Periods",1.0000,1.0000,1,"uV"
+
+"time","value"
+1.0000,-0.3236

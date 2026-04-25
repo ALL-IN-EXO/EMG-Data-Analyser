@@ -40,14 +40,15 @@ def sliding_rms(x: np.ndarray, fs: float, window_ms: float) -> np.ndarray:
 
 
 def apply_display(x: np.ndarray, fs: float, cfg: PipelineConfig) -> np.ndarray:
-    """Highpass only — used for Page 1 waveform display (no rectify)."""
-    return highpass(x, fs, cfg.highpass_hz)
+    """Display preview pipeline for Page 1."""
+    return apply_pipeline(x, fs, cfg)
 
 
 def apply_pipeline(x: np.ndarray, fs: float, cfg: PipelineConfig) -> np.ndarray:
     """Full pipeline: highpass → rectify → smooth. Used before segmentation."""
     out = highpass(x, fs, cfg.highpass_hz)
-    out = rectify(out)
+    if cfg.rectify:
+        out = rectify(out)
     if cfg.smoothing == "lowpass":
         out = lowpass(out, fs, cfg.smoothing_cutoff_hz)
     elif cfg.smoothing == "movavg":

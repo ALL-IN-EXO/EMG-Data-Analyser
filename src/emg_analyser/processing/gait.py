@@ -17,54 +17,51 @@ def _find_period_autocorr(
 ) -> int:
     """Return dominant period in samples via autocorrelation."""
     env_zm = env - env.mean()
-    corr = np.correlate(env_zm, env_zm, mode="full")
-    corr = corr[len(corr) // 2 :]
-    corr /= corr[0] + 1e-12
 
     min_lag = max(1, int(min_s * fs))
-    max_lag = min(int(max_s * fs), len(corr) - 1)
+    max_lag = min(int(max_s * fs), len(env_zm) - 1)
     if min_lag >= max_lag:
         return int(fs)  # fallback: 1 s
 
+    # FFT autocorrelation: O(N log N), much faster than np.correlate O(N^2)
+    n = len(env_zm)
+    n_fft = 1 << (2 * n - 1).bit_length()
+    spectrum = np.fft.rfft(env_zm, n=n_fft)
+    corr = np.fft.irfft(spectrum * np.conjugate(spectrum), n=n_fft)[:n]
+    c0 = float(corr[0]) if len(corr) else 0.0
+    if c0 <= 1e-12:
+        return int(fs)
+    corr /= c0
+
     search = corr[min_lag : max_lag + 1]
+    if len(search) == 0:
+        return int(fs)
     best = int(np.argmax(search))
     return min_lag + best
 
 
-def _greedy_boundaries(
-    env: np.ndarray, all_peaks: np.ndarray, period_samples: int
+def _select_boundaries(
+    all_peaks: np.ndarray, period_samples: int, max_gap_factor: float = 3.0
 ) -> list[int]:
-    """Starting from the first peak, step forward by ~period and snap to nearest peak."""
+    """Return sorted boundary list from height/distance-filtered peaks.
+
+    Peaks are already spaced >= 70 % of the period by find_peaks(), so we use
+    them directly as boundaries.  Consecutive pairs whose gap exceeds
+    max_gap_factor × period are dropped (the long cycle is discarded later in
+    _extract_cycles via the min-length check rather than here, so we keep all
+    boundaries — this comment is just for clarity).
+    """
     if len(all_peaks) == 0:
         return []
-
-    boundaries = [int(all_peaks[0])]
-    current = boundaries[0]
-    half_period = period_samples // 2
-
-    while True:
-        expected = current + period_samples
-        window = int(period_samples * 0.25)
-        lo, hi = expected - window, expected + window
-
-        candidates = all_peaks[(all_peaks >= lo) & (all_peaks <= hi)]
-        if len(candidates) == 0:
-            break
-
-        next_peak = int(candidates[np.argmin(np.abs(candidates - expected))])
-        if next_peak <= current:
-            break
-        boundaries.append(next_peak)
-        current = next_peak
-
-        if current >= len(env) - half_period:
-            break
-
-    return boundaries
+    return [int(p) for p in sorted(all_peaks)]
 
 
 def _extract_cycles(
-    trial: Trial, pipeline_cfg: PipelineConfig, boundaries: list[int]
+    trial: Trial,
+    pipeline_cfg: PipelineConfig,
+    boundaries: list[int],
+    min_duration_s: float = 0.2,
+    max_duration_s: float = 10.0,
 ) -> CycleSet:
     """Given boundary sample indices, extract and interpolate per-channel cycles."""
     if len(boundaries) < 2:
@@ -79,11 +76,15 @@ def _extract_cycles(
 
     cycles: dict[str, list[np.ndarray]] = {ch: [] for ch in ch_names}
     durations: list[float] = []
+    cycle_starts: list[float] = []
 
     for i in range(len(boundaries) - 1):
         start, end = boundaries[i], boundaries[i + 1]
         n = end - start
-        if n < int(trial.fs * 0.2):  # skip fragments < 0.2 s
+        if n <= 1:
+            continue
+        dur_s = n / trial.fs
+        if dur_s < min_duration_s or dur_s > max_duration_s:
             continue
         for ch in ch_names:
             seg = processed[ch][start:end]
@@ -93,16 +94,22 @@ def _extract_cycles(
                 seg,
             )
             cycles[ch].append(interp)
-        durations.append(n / trial.fs)
+        durations.append(dur_s)
+        cycle_starts.append(float(trial.t[start]))
 
     if not durations:
         return CycleSet({}, np.array([]), 0)
 
     stacked = {ch: np.stack(cycles[ch]) for ch in ch_names}
-    return CycleSet(cycles=stacked, durations=np.array(durations), n_cycles=len(durations))
+    return CycleSet(
+        cycles=stacked,
+        durations=np.array(durations),
+        n_cycles=len(durations),
+        start_times=np.array(cycle_starts, dtype=float),
+    )
 
 
-def _normalize_cycles(cycle_set: CycleSet) -> CycleSet:
+def _normalize_cycles_task_env95(cycle_set: CycleSet) -> CycleSet:
     """Divide each channel's (N, 101) matrix by the 95th-percentile of its mean."""
     new_cycles: dict[str, np.ndarray] = {}
     for ch, mat in cycle_set.cycles.items():
@@ -112,6 +119,25 @@ def _normalize_cycles(cycle_set: CycleSet) -> CycleSet:
         cycles=new_cycles,
         durations=cycle_set.durations,
         n_cycles=cycle_set.n_cycles,
+        start_times=cycle_set.start_times,
+    )
+
+
+def _normalize_cycles_mvc_env95(cycle_set: CycleSet, trial: Trial) -> CycleSet:
+    """Divide each channel by MVC 95th-percentile stored in trial.meta."""
+    mvc_peak_abs = trial.meta.get("mvc_peak_abs", {})
+    new_cycles: dict[str, np.ndarray] = {}
+    for ch, mat in cycle_set.cycles.items():
+        peak = float(mvc_peak_abs.get(ch, 0.0))
+        if peak <= 0:
+            new_cycles[ch] = mat
+            continue
+        new_cycles[ch] = mat / peak
+    return CycleSet(
+        cycles=new_cycles,
+        durations=cycle_set.durations,
+        n_cycles=cycle_set.n_cycles,
+        start_times=cycle_set.start_times,
     )
 
 
@@ -133,11 +159,19 @@ class AutocorrSegmenter:
         peaks, _ = sp_signal.find_peaks(
             env, distance=min_dist, height=height_thresh
         )
-        boundaries = _greedy_boundaries(env, peaks, period)
+        boundaries = _select_boundaries(peaks, period)
 
-        cs = _extract_cycles(trial, pipeline_cfg, boundaries)
+        cs = _extract_cycles(
+            trial,
+            pipeline_cfg,
+            boundaries,
+            min_duration_s=seg_cfg.period_min_s,
+            max_duration_s=seg_cfg.period_max_s,
+        )
         if seg_cfg.normalize == "task_env95" and cs.n_cycles > 0:
-            cs = _normalize_cycles(cs)
+            cs = _normalize_cycles_task_env95(cs)
+        elif seg_cfg.normalize == "mvc_env95" and cs.n_cycles > 0:
+            cs = _normalize_cycles_mvc_env95(cs, trial)
         return cs
 
 
@@ -153,9 +187,17 @@ class HeelStrikeSegmenter:
             [int(t * trial.fs) for t in hs
              if 0 <= int(t * trial.fs) < trial.n_samples]
         )
-        cs = _extract_cycles(trial, pipeline_cfg, boundaries)
+        cs = _extract_cycles(
+            trial,
+            pipeline_cfg,
+            boundaries,
+            min_duration_s=seg_cfg.period_min_s,
+            max_duration_s=seg_cfg.period_max_s,
+        )
         if seg_cfg.normalize == "task_env95" and cs.n_cycles > 0:
-            cs = _normalize_cycles(cs)
+            cs = _normalize_cycles_task_env95(cs)
+        elif seg_cfg.normalize == "mvc_env95" and cs.n_cycles > 0:
+            cs = _normalize_cycles_mvc_env95(cs, trial)
         return cs
 
 
@@ -168,3 +210,16 @@ def segment(
     ):
         return HeelStrikeSegmenter().segment(trial, pipeline_cfg, seg_cfg)
     return AutocorrSegmenter().segment(trial, pipeline_cfg, seg_cfg)
+
+
+def normalize_cycle_set(
+    cs: CycleSet,
+    normalize: str,
+    trial: Trial | None = None,
+) -> CycleSet:
+    """Apply post-extraction normalization to a CycleSet."""
+    if normalize == "task_env95" and cs.n_cycles > 0:
+        return _normalize_cycles_task_env95(cs)
+    if normalize == "mvc_env95" and cs.n_cycles > 0 and trial is not None:
+        return _normalize_cycles_mvc_env95(cs, trial)
+    return cs

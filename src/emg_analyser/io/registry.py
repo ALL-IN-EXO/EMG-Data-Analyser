@@ -2,6 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .myo_csv import MyoMetricsAdapter
+from .camargo_adapter import CamargoAdapter
 from .base import DatasetAdapter, TrialHandle
 
 _ADAPTERS: dict[str, DatasetAdapter] = {}
@@ -32,3 +33,4 @@ def detect_adapter(root: Path) -> DatasetAdapter | None:
 
 # Register built-in adapters on import
 register(MyoMetricsAdapter())
+register(CamargoAdapter())

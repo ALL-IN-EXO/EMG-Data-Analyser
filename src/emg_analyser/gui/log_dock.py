@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import datetime
 from PyQt5.QtWidgets import QDockWidget, QPlainTextEdit, QWidget
 from PyQt5.QtCore import Qt
 
@@ -17,4 +18,5 @@ class LogDock(QDockWidget):
         self.setWidget(self._text)
 
     def append(self, msg: str) -> None:
-        self._text.appendPlainText(msg)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._text.appendPlainText(f"[{timestamp}] {msg}")

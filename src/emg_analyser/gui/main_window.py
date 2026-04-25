@@ -10,6 +10,7 @@ from ..io.registry import detect_adapter
 from ..io.base import TrialHandle
 from .pages.page1_timeline import Page1Timeline
 from .pages.page2_gait import Page2GaitCycle
+from .pages.page3_camargo import Page3Camargo
 from .log_dock import LogDock
 
 
@@ -23,6 +24,7 @@ class MainWindow(QMainWindow):
         self._load_thread: LoadThread | None = None
         self._reprocess_thread: ReprocessThread | None = None
         self._segment_thread: SegmentThread | None = None
+        self._segment_seq = 0
 
         self._build_ui()
         self._connect_signals()
@@ -36,8 +38,10 @@ class MainWindow(QMainWindow):
         self._tabs = QTabWidget()
         self._page1 = Page1Timeline()
         self._page2 = Page2GaitCycle()
+        self._page3 = Page3Camargo()
         self._tabs.addTab(self._page1, "1 · Raw Timeline")
         self._tabs.addTab(self._page2, "2 · Gait Cycle Segmentation")
+        self._tabs.addTab(self._page3, "3 · Camargo Dataset")
         self._tabs.setTabEnabled(1, False)  # disabled until a trial is loaded
         self.setCentralWidget(self._tabs)
 
@@ -64,18 +68,31 @@ class MainWindow(QMainWindow):
         self._session.cyclesReady.connect(self._page2.display_cycles)
         self._session.logMessage.connect(self._log.append)
 
+        # Page 3 log
+        self._page3.logMessage.connect(self._log.append)
+
         # Tab switch → auto-trigger segmentation
         self._tabs.currentChanged.connect(self._on_tab_changed)
 
     # ------------------------------------------------------------------
     # Folder / load
     # ------------------------------------------------------------------
-    def _on_folder_requested(self, path: str) -> None:
+    def _on_folder_requested(self, path: str, mvc_path: str) -> None:
         root = Path(path)
+        mvc_root = Path(mvc_path)
         adapter = detect_adapter(root)
         if adapter is None:
             self._log.append(f"[WARN] No recognised dataset found in: {path}")
             self._page1.set_path_label(f"(unrecognised) {path}")
+            return
+
+        if not mvc_root.is_dir():
+            self._log.append(f"[WARN] MVC folder not found: {mvc_path}")
+            return
+        if not self._looks_like_mvc_folder(mvc_root):
+            self._log.append(
+                f"[WARN] Selected MVC folder has no Channel_Curves CSV: {mvc_path}"
+            )
             return
 
         handles = adapter.scan(root)
@@ -85,6 +102,7 @@ class MainWindow(QMainWindow):
 
         # Auto-load the first (and typically only) trial
         handle = handles[0]
+        handle.paths["mvc_dir"] = mvc_root
         self._log.append(f"[INFO] Loading {handle} …")
         self._page1.set_path_label(str(root))
 
@@ -103,6 +121,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _on_trial_loaded(self, trial) -> None:
         self._page1.load_trial(trial)
+        self._page1.set_cycle_starts([])
         self._page2.set_trial(trial)
         self._tabs.setTabEnabled(1, True)
         self._trigger_reprocess()
@@ -113,6 +132,8 @@ class MainWindow(QMainWindow):
     def _on_pipeline_changed(self, cfg) -> None:
         self._session.set_pipeline(cfg)
         self._trigger_reprocess()
+        if self._tabs.currentIndex() == 1:
+            self._trigger_segmentation()
 
     def _trigger_reprocess(self) -> None:
         trial = self._session.trial
@@ -164,6 +185,8 @@ class MainWindow(QMainWindow):
             self._segment_thread.wait(200)
 
         self._page2.show_loading(True)
+        self._segment_seq += 1
+        seq = self._segment_seq
 
         self._segment_thread = SegmentThread(
             trial,
@@ -172,18 +195,26 @@ class MainWindow(QMainWindow):
             self._session.seg_cfg,
             self,
         )
-        self._segment_thread.done.connect(self._on_seg_done)
+        self._segment_thread.done.connect(
+            lambda cycle_set, s=seq: self._on_seg_done(cycle_set, s)
+        )
         self._segment_thread.error.connect(
-            lambda e: (
-                self._page2.show_loading(False),
-                self._log.append(f"[ERROR] Segmentation failed: {e}"),
-            )
+            lambda e, s=seq: self._on_seg_error(e, s)
         )
         self._segment_thread.start()
 
-    def _on_seg_done(self, cycle_set) -> None:
+    def _on_seg_done(self, cycle_set, seq: int) -> None:
+        if seq != self._segment_seq:
+            return
         self._page2.show_loading(False)
+        self._page1.set_cycle_starts(cycle_set.start_times)
         self._session.set_cycles(cycle_set)
+
+    def _on_seg_error(self, err: str, seq: int) -> None:
+        if seq != self._segment_seq:
+            return
+        self._page2.show_loading(False)
+        self._log.append(f"[ERROR] Segmentation failed: {err}")
 
     # ------------------------------------------------------------------
     # Geometry persistence
@@ -194,6 +225,15 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(s.value("geometry"))
         if s.contains("windowState"):
             self.restoreState(s.value("windowState"))
+
+    @staticmethod
+    def _looks_like_mvc_folder(path: Path) -> bool:
+        if any(path.glob("Channel_Curves-*.csv")):
+            return True
+        for sub in path.iterdir():
+            if sub.is_dir() and any(sub.glob("Channel_Curves-*.csv")):
+                return True
+        return False
 
     def closeEvent(self, event) -> None:
         s = QSettings("zst", "emg-analyser")

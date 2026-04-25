@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 
 GAIT_PHASE_N = 101  # 0 % … 100 %
@@ -10,6 +10,9 @@ class CycleSet:
     cycles: dict[str, np.ndarray]  # channel -> (N_cycles, GAIT_PHASE_N)
     durations: np.ndarray          # (N_cycles,) seconds
     n_cycles: int
+    start_times: np.ndarray = field(
+        default_factory=lambda: np.array([], dtype=float)
+    )  # (N_cycles,) seconds on trial timeline
 
     def mean(self, channel: str) -> np.ndarray:
         return self.cycles[channel].mean(axis=0)
