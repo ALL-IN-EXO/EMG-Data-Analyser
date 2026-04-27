@@ -11,6 +11,7 @@ Features:
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
@@ -44,12 +45,14 @@ _CHANNEL_COLORS = [
     "#00bcd4", "#ff9800",
 ]
 _MAX_INDIVIDUAL = 30
+_DEFAULT_ROOT = "/home/jz7785/ZST/Exo_Dataset/EMG_Public_Data/Gait120_001_to_010"
 
 
 class Page4Gait120(QWidget):
     """Page 4 — Gait120 dataset viewer."""
 
     logMessage = pyqtSignal(str)
+    dataReady = pyqtSignal(dict)   # emitted after a successful analysis
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -64,6 +67,16 @@ class Page4Gait120(QWidget):
         self._updating_muscle_checks = False
 
         self._build_ui()
+        self._apply_default_path()
+
+    def _apply_default_path(self) -> None:
+        if Path(_DEFAULT_ROOT).is_dir():
+            self._root_path = _DEFAULT_ROOT
+            short = "…" + _DEFAULT_ROOT[-37:] if len(_DEFAULT_ROOT) > 40 else _DEFAULT_ROOT
+            self._lbl_folder.setText(short)
+            self._btn_scan.setEnabled(True)
+            self._lbl_status.setText("Press 'Scan Dataset' to load structure")
+            self._lbl_status.setStyleSheet("color: #555; font-style: normal;")
 
     # ------------------------------------------------------------------
     # UI construction
@@ -222,7 +235,10 @@ class Page4Gait120(QWidget):
     # Event handlers
     # ------------------------------------------------------------------
     def _on_browse(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Select Gait120 dataset root")
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Gait120 dataset root",
+            self._root_path or _DEFAULT_ROOT
+        )
         if path:
             self._root_path = path
             short = path if len(path) <= 40 else "…" + path[-37:]
@@ -232,7 +248,6 @@ class Page4Gait120(QWidget):
             self._lbl_status.setStyleSheet("color: #555; font-style: normal;")
 
     def _on_scan(self) -> None:
-        from pathlib import Path
         try:
             self._last_result = None
             self._subjects = list_subjects(Path(self._root_path))
@@ -338,6 +353,7 @@ class Page4Gait120(QWidget):
         self._last_result = result
         self._populate_muscles(result.get("channels", []))
         self._build_plots(result)
+        self.dataReady.emit(result)
 
     def _on_error(self, err: str, seq: int) -> None:
         if seq != self._analysis_seq:

@@ -12,6 +12,7 @@ Features:
 from __future__ import annotations
 
 import time
+from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -40,6 +41,8 @@ from ...model.cycles import CycleSet
 from ...model.pipeline import PipelineConfig, SegConfig
 from ...services.worker import CamargoThread
 
+_DEFAULT_ROOT = "/home/jz7785/ZST/Exo_Dataset/EMG_Public_Data/Aaron/Camargo2021"
+
 # 20 perceptually distinct colors for multi-subject overlay
 _SUBJECT_COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
@@ -61,6 +64,7 @@ class Page3Camargo(QWidget):
     """Page 3 — Camargo 2021 dataset viewer."""
 
     logMessage = pyqtSignal(str)
+    dataReady = pyqtSignal(dict)   # emitted after a successful analysis; includes "mode" key
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -77,6 +81,16 @@ class Page3Camargo(QWidget):
         self._analysis_started_s = 0.0
 
         self._build_ui()
+        self._apply_default_path()
+
+    def _apply_default_path(self) -> None:
+        if Path(_DEFAULT_ROOT).is_dir():
+            self._root_path = _DEFAULT_ROOT
+            short = "…" + _DEFAULT_ROOT[-37:] if len(_DEFAULT_ROOT) > 40 else _DEFAULT_ROOT
+            self._lbl_folder.setText(short)
+            self._btn_scan.setEnabled(True)
+            self._lbl_status.setText("Press 'Scan Dataset' to load structure")
+            self._lbl_status.setStyleSheet("color: #555; font-style: normal;")
 
     # ------------------------------------------------------------------
     # UI construction
@@ -306,7 +320,8 @@ class Page3Camargo(QWidget):
     # ------------------------------------------------------------------
     def _on_browse(self) -> None:
         path = QFileDialog.getExistingDirectory(
-            self, "Select Camargo dataset root"
+            self, "Select Camargo dataset root",
+            self._root_path or _DEFAULT_ROOT
         )
         if path:
             self._root_path = path
@@ -317,7 +332,6 @@ class Page3Camargo(QWidget):
             self._lbl_status.setStyleSheet("color: #555; font-style: normal;")
 
     def _on_scan(self) -> None:
-        from pathlib import Path
         try:
             self._last_result = None
             self._populate_muscles([])
@@ -481,6 +495,7 @@ class Page3Camargo(QWidget):
         self._last_result = result
         self._populate_muscles(result.get("channels", []))
         self._build_plots(result)
+        self.dataReady.emit({**result, "mode": self._selected_mode() or ""})
 
     def _on_error(self, err: str, seq: int) -> None:
         if seq != self._analysis_seq:

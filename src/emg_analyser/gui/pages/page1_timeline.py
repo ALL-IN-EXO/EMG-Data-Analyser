@@ -26,6 +26,9 @@ from PyQt5.QtWidgets import (
 from ...model.trial import Trial
 from ...model.pipeline import PipelineConfig
 
+_DEFAULT_DATA = str(Path(__file__).parents[4] / "SAMPLE_DATA" / "2026.4.13-EMG")
+_DEFAULT_MVC  = str(Path(__file__).parents[4] / "SAMPLE_DATA" / "2026.4.13-EMG" / "EMG-Electrode Max MVC")
+
 # Distinct colors for up to 12 channels
 _CHANNEL_COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
@@ -61,6 +64,17 @@ class Page1Timeline(QWidget):
         self._reprocess_timer.timeout.connect(self._emit_pipeline)
 
         self._build_ui()
+        self._apply_default_paths()
+
+    def _apply_default_paths(self) -> None:
+        if Path(_DEFAULT_DATA).is_dir():
+            self._data_path = _DEFAULT_DATA
+            self._lbl_data_path.setText(_DEFAULT_DATA)
+            self._lbl_data_path.setStyleSheet("color: grey;")
+        if Path(_DEFAULT_MVC).is_dir():
+            self._mvc_path = _DEFAULT_MVC
+            self._lbl_mvc_path.setText(_DEFAULT_MVC)
+            self._lbl_mvc_path.setStyleSheet("color: grey;")
 
     # ------------------------------------------------------------------
     # UI construction
@@ -246,7 +260,9 @@ class Page1Timeline(QWidget):
     # Folder handling
     # ------------------------------------------------------------------
     def _on_pick_data_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Select Data Folder")
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Data Folder", self._data_path or _DEFAULT_DATA
+        )
         if path:
             self._data_path = path
             self._lbl_data_path.setText(path)
@@ -254,7 +270,9 @@ class Page1Timeline(QWidget):
             self._try_emit_folder_request()
 
     def _on_pick_mvc_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Select MVC Folder")
+        path = QFileDialog.getExistingDirectory(
+            self, "Select MVC Folder", self._mvc_path or _DEFAULT_MVC
+        )
         if path:
             self._mvc_path = path
             self._lbl_mvc_path.setText(path)

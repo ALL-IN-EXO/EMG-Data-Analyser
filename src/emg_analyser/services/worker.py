@@ -191,6 +191,77 @@ class CamargoThread(QThread):
         })
 
 
+class MyoMetricsCompareThread(QThread):
+    """Load, segment, and extract mean gait-cycle profiles from a MyoMetrics trial.
+
+    Emits done({'mean_profiles': {raw_ch: ndarray(101,)}, 'n_cycles': int}).
+    """
+
+    done = pyqtSignal(dict)
+    error = pyqtSignal(str)
+    logMessage = pyqtSignal(str)
+
+    def __init__(
+        self,
+        data_root: str,
+        mvc_root: str,
+        pipeline_cfg: PipelineConfig,
+        seg_cfg: SegConfig,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._data_root = data_root
+        self._mvc_root = mvc_root
+        self._pipeline_cfg = pipeline_cfg
+        self._seg_cfg = seg_cfg
+
+    def run(self) -> None:
+        try:
+            self._run()
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+    def _run(self) -> None:
+        from pathlib import Path
+        from ..io.registry import detect_adapter
+
+        data_root = Path(self._data_root)
+        mvc_root = Path(self._mvc_root)
+
+        adapter = detect_adapter(data_root)
+        if adapter is None:
+            raise ValueError(f"No recognised dataset in {data_root}")
+
+        handles = adapter.scan(data_root)
+        if not handles:
+            raise ValueError("No trials found in MyoMetrics folder")
+
+        handle = handles[0]
+        handle.paths["mvc_dir"] = mvc_root
+
+        trial = adapter.load_trial(handle)
+        self.logMessage.emit(
+            f"[INFO] MyoMetrics: {trial.subject}/{trial.trial_id}, "
+            f"{trial.n_samples} samples @ {trial.fs:.0f} Hz"
+        )
+
+        cs = gait_mod.segment(trial, self._pipeline_cfg, self._seg_cfg)
+        if cs.n_cycles == 0:
+            raise ValueError("No gait cycles detected in MyoMetrics trial")
+
+        self.logMessage.emit(f"[INFO] MyoMetrics: {cs.n_cycles} cycles extracted")
+
+        mean_profiles = {
+            ch: mat.mean(axis=0)
+            for ch, mat in cs.cycles.items()
+            if mat.shape[0] > 0
+        }
+        self.done.emit({
+            "mean_profiles": mean_profiles,
+            "n_cycles": cs.n_cycles,
+        })
+
+
 class Gait120Thread(QThread):
     """Load and aggregate Gait120 ProcessedData for selected subjects and mode.
 
