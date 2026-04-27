@@ -1,8 +1,10 @@
 from __future__ import annotations
 from pathlib import Path
 
+import pyqtgraph as pg
 from PyQt5.QtCore import Qt, QSettings
-from PyQt5.QtWidgets import QMainWindow, QTabWidget, QWidget
+from PyQt5.QtGui import QColor, QPalette
+from PyQt5.QtWidgets import QAction, QApplication, QMainWindow, QTabWidget, QToolBar, QWidget
 
 from ..services.session import SessionManager
 from ..services.worker import LoadThread, ReprocessThread, SegmentThread
@@ -27,10 +29,12 @@ class MainWindow(QMainWindow):
         self._reprocess_thread: ReprocessThread | None = None
         self._segment_thread: SegmentThread | None = None
         self._segment_seq = 0
+        self._theme_dark = False
 
         self._build_ui()
         self._connect_signals()
         self._restore_geometry()
+        self._restore_theme()
 
     # ------------------------------------------------------------------
     # UI
@@ -54,6 +58,14 @@ class MainWindow(QMainWindow):
         # Log dock
         self._log = LogDock(self)
         self.addDockWidget(Qt.BottomDockWidgetArea, self._log)
+
+        # Theme toolbar
+        self._toolbar_view = QToolBar("View", self)
+        self._toolbar_view.setMovable(False)
+        self.addToolBar(Qt.TopToolBarArea, self._toolbar_view)
+        self._act_dark = QAction("Dark Theme", self)
+        self._act_dark.setCheckable(True)
+        self._toolbar_view.addAction(self._act_dark)
 
     # ------------------------------------------------------------------
     # Signal connections
@@ -90,6 +102,13 @@ class MainWindow(QMainWindow):
 
         # Tab switch → auto-trigger segmentation
         self._tabs.currentChanged.connect(self._on_tab_changed)
+        self._act_dark.toggled.connect(self._apply_theme)
+
+    # ------------------------------------------------------------------
+    # External log hook
+    # ------------------------------------------------------------------
+    def append_log(self, message: str) -> None:
+        self._log.append(message)
 
     # ------------------------------------------------------------------
     # Folder / load
@@ -243,6 +262,48 @@ class MainWindow(QMainWindow):
         if s.contains("windowState"):
             self.restoreState(s.value("windowState"))
 
+    def _restore_theme(self) -> None:
+        s = QSettings("zst", "emg-analyser")
+        dark = bool(s.value("themeDark", False, type=bool))
+        self._act_dark.blockSignals(True)
+        self._act_dark.setChecked(dark)
+        self._act_dark.blockSignals(False)
+        self._apply_theme(dark)
+
+    def _apply_theme(self, dark: bool) -> None:
+        app = QApplication.instance()
+        if app is None:
+            return
+
+        if dark:
+            palette = QPalette()
+            palette.setColor(QPalette.Window, QColor(43, 43, 43))
+            palette.setColor(QPalette.WindowText, QColor(230, 230, 230))
+            palette.setColor(QPalette.Base, QColor(30, 30, 30))
+            palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+            palette.setColor(QPalette.ToolTipBase, QColor(255, 255, 255))
+            palette.setColor(QPalette.ToolTipText, QColor(255, 255, 255))
+            palette.setColor(QPalette.Text, QColor(220, 220, 220))
+            palette.setColor(QPalette.Button, QColor(60, 60, 60))
+            palette.setColor(QPalette.ButtonText, QColor(230, 230, 230))
+            palette.setColor(QPalette.BrightText, QColor(255, 80, 80))
+            palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+            palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
+            app.setPalette(palette)
+            app.setStyleSheet(
+                "QToolTip { color: #fff; background: #2a82da; border: 1px solid #1f5ea8; }"
+            )
+            pg.setConfigOption("foreground", "#e6e6e6")
+        else:
+            app.setPalette(app.style().standardPalette())
+            app.setStyleSheet("")
+            pg.setConfigOption("foreground", "k")
+
+        self._theme_dark = dark
+        for page in (self._page1, self._page2, self._page3, self._page4, self._page5):
+            if hasattr(page, "set_theme"):
+                page.set_theme(dark)
+
     @staticmethod
     def _looks_like_mvc_folder(path: Path) -> bool:
         if any(path.glob("Channel_Curves-*.csv")):
@@ -256,4 +317,5 @@ class MainWindow(QMainWindow):
         s = QSettings("zst", "emg-analyser")
         s.setValue("geometry", self.saveGeometry())
         s.setValue("windowState", self.saveState())
+        s.setValue("themeDark", self._theme_dark)
         super().closeEvent(event)

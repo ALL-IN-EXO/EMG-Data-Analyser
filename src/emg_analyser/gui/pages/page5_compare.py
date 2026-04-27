@@ -11,7 +11,9 @@ Concordance Correlation Coefficient (CCC) is computed per channel.
 """
 from __future__ import annotations
 
+import re
 import sys
+from difflib import SequenceMatcher
 from itertools import combinations
 
 import numpy as np
@@ -59,7 +61,7 @@ _MYO_TO_CANONICAL: dict[str, str] = {
     "RECTUS_FEM._RT":  "rectus_femoris",
 }
 
-# Camargo channel names are already canonical (used as-is)
+# Camargo channel names are resolved by explicit+fuzzy mapping (below).
 
 # Human-readable display labels used in plot titles
 _CANONICAL_DISPLAY: dict[str, str] = {
@@ -95,6 +97,102 @@ _N_COLS = 3
 
 # ── Pure-function helpers ─────────────────────────────────────────────────
 
+def _norm_name(name: str) -> str:
+    """Normalize channel names for robust cross-dataset matching."""
+    return re.sub(r"[^a-z0-9]+", "", name.strip().lower())
+
+
+_CANONICAL_KEYS = set(_CANONICAL_DISPLAY.keys())
+_CANONICAL_ALIASES: dict[str, set[str]] = {
+    "gastrocnemius_l": {
+        "gastrocnemius_l", "gastrocnemiuslateralis", "gastrocnemiusl",
+        "gastroc_l", "gastroclat", "gastrocnemiuslateralisl",
+    },
+    "gastrocnemius_m": {
+        "gastrocnemius_m", "gastrocnemiusmedialis", "gastrocnemiusm",
+        "gastrocmed", "gastroc_m", "gastrocnemiusmed",
+        "gastrocnemuismedialis",  # Gait120 typo variant
+    },
+    "soleus": {
+        "soleus", "soleusmedialis", "soleusmedial", "soleus_m",
+    },
+    "soleus_l": {
+        "soleus_l", "soleuslateralis", "soleusl", "soleuslat",
+    },
+    "tibialis_anterior": {
+        "tibialis_anterior", "tibialisanterior", "ta",
+    },
+    "vastus_medialis": {
+        "vastus_medialis", "vastusmedialis", "vm",
+    },
+    "vastus_lateralis": {
+        "vastus_lateralis", "vastuslateralis", "vl",
+    },
+    "rectus_femoris": {
+        "rectus_femoris", "rectusfemoris", "rf",
+    },
+    "biceps_femoris": {
+        "biceps_femoris", "bicepsfemoris", "bicepsfem",
+        "bicepsfemrt", "bicepsfemrt", "bicepsfemrtrt",
+    },
+    "semitendinosus": {
+        "semitendinosus", "st",
+    },
+    "gluteus_medius": {
+        "gluteus_medius", "gluteusmedius", "glutmed", "glutmedrt",
+    },
+    "gluteus_maximus": {
+        "gluteus_maximus", "gluteusmaximus",
+    },
+    "peroneus_longus": {
+        "peroneus_longus", "peroneuslongus",
+    },
+    "peroneus_brevis": {
+        "peroneus_brevis", "peroneusbrevis",
+    },
+}
+
+_ALIAS_NORM_TO_CANONICAL: dict[str, str] = {}
+_CANONICAL_ALIAS_NORMS: dict[str, set[str]] = {}
+for canonical in _CANONICAL_KEYS:
+    aliases = set(_CANONICAL_ALIASES.get(canonical, set()))
+    aliases.add(canonical)
+    aliases.add(canonical.replace("_", ""))
+    norms = {_norm_name(a) for a in aliases if a}
+    _CANONICAL_ALIAS_NORMS[canonical] = norms
+    for n in norms:
+        _ALIAS_NORM_TO_CANONICAL[n] = canonical
+
+
+def _resolve_canonical_name(raw_name: str, explicit_map: dict[str, str] | None = None) -> str | None:
+    """Resolve a raw channel name into canonical key via explicit+fuzzy matching."""
+    if explicit_map and raw_name in explicit_map:
+        mapped = explicit_map[raw_name]
+        if mapped in _CANONICAL_KEYS:
+            return mapped
+        raw_name = mapped
+
+    norm = _norm_name(raw_name)
+    if not norm:
+        return None
+
+    direct = _ALIAS_NORM_TO_CANONICAL.get(norm)
+    if direct is not None:
+        return direct
+
+    best_name: str | None = None
+    best_score = 0.0
+    for canonical, alias_norms in _CANONICAL_ALIAS_NORMS.items():
+        score = max(
+            SequenceMatcher(None, norm, alias_norm).ratio()
+            for alias_norm in alias_norms
+        )
+        if score > best_score:
+            best_name = canonical
+            best_score = score
+
+    return best_name if best_score >= 0.78 else None
+
 def _ccc(x: np.ndarray, y: np.ndarray) -> float:
     """Lin's Concordance Correlation Coefficient for two equal-length 1-D arrays."""
     if len(x) < 2:
@@ -118,14 +216,17 @@ def _camargo_to_profiles(result: dict) -> dict[str, np.ndarray]:
     channels: list[str] = result.get("channels", [])
     profiles: dict[str, np.ndarray] = {}
     for ch in channels:
+        canonical = _resolve_canonical_name(ch)
+        if canonical is None:
+            continue
         subj_means = [
             cs.cycles[ch].mean(axis=0)
             for cs in by_subject.values()
             if ch in cs.cycles and cs.cycles[ch].shape[0] > 0
         ]
         if subj_means:
-            profiles[ch] = np.mean(subj_means, axis=0)
-    return profiles   # Camargo names are already canonical
+            profiles[canonical] = np.mean(subj_means, axis=0)
+    return profiles
 
 
 def _gait120_to_profiles(result: dict) -> dict[str, np.ndarray]:
@@ -134,7 +235,7 @@ def _gait120_to_profiles(result: dict) -> dict[str, np.ndarray]:
     channels: list[str] = result.get("channels", [])
     profiles: dict[str, np.ndarray] = {}
     for ch in channels:
-        canonical = _GAIT120_TO_CANONICAL.get(ch)
+        canonical = _resolve_canonical_name(ch, _GAIT120_TO_CANONICAL)
         if canonical is None:
             continue
         subj_means = [
@@ -149,11 +250,15 @@ def _gait120_to_profiles(result: dict) -> dict[str, np.ndarray]:
 
 def _myo_to_profiles(cycle_set) -> dict[str, np.ndarray]:
     """Mean profile per canonical channel from a MyoMetrics CycleSet."""
-    return {
-        _MYO_TO_CANONICAL[ch]: mat.mean(axis=0)
-        for ch, mat in cycle_set.cycles.items()
-        if ch in _MYO_TO_CANONICAL and mat.shape[0] > 0
-    }
+    profiles: dict[str, np.ndarray] = {}
+    for ch, mat in cycle_set.cycles.items():
+        if mat.shape[0] == 0:
+            continue
+        canonical = _resolve_canonical_name(ch, _MYO_TO_CANONICAL)
+        if canonical is None:
+            continue
+        profiles[canonical] = mat.mean(axis=0)
+    return profiles
 
 
 # ── Page ─────────────────────────────────────────────────────────────────
@@ -178,6 +283,7 @@ class Page5Compare(QWidget):
         self._plot_items: list[pg.PlotItem] = []
         self._channel_checks: dict[str, QCheckBox] = {}
         self._updating_checks = False
+        self._is_dark = False
 
         self._build_ui()
 
@@ -267,6 +373,19 @@ class Page5Compare(QWidget):
         vs.addWidget(self._lbl_myo_src)
 
         v.addWidget(grp_src)
+
+        # ── Dataset visibility ──
+        grp_ds = QGroupBox("Datasets")
+        vds = QVBoxLayout(grp_ds)
+        vds.setSpacing(3)
+        self._chk_ds_cam = QCheckBox("Camargo 2021")
+        self._chk_ds_g120 = QCheckBox("Gait120")
+        self._chk_ds_myo = QCheckBox("Ours (MyoMetrics)")
+        for cb in (self._chk_ds_cam, self._chk_ds_g120, self._chk_ds_myo):
+            cb.setChecked(True)
+            cb.toggled.connect(self._refresh_if_ready)
+            vds.addWidget(cb)
+        v.addWidget(grp_ds)
 
         # ── Display options ──
         grp_disp = QGroupBox("Display")
@@ -423,38 +542,64 @@ class Page5Compare(QWidget):
     # Comparison logic
     # ──────────────────────────────────────────────────────────────────────
 
-    def _n_loaded(self) -> int:
-        return sum([
-            self._cam_raw_result is not None,
-            self._g120_raw_result is not None,
-            self._myo_cycle_set is not None and self._myo_cycle_set.n_cycles > 0,
-        ])
+    def _selected_dataset_keys(self) -> list[str]:
+        keys: list[str] = []
+        if self._chk_ds_cam.isChecked():
+            keys.append("camargo")
+        if self._chk_ds_g120.isChecked():
+            keys.append("gait120")
+        if self._chk_ds_myo.isChecked():
+            keys.append("myometrics")
+        return keys
 
     def _refresh_if_ready(self) -> None:
-        loaded = self._n_loaded()
-        self._btn_compare.setEnabled(loaded >= 2)
-        if loaded >= 2:
+        selected = set(self._selected_dataset_keys())
+        selected_loaded = sum([
+            "camargo" in selected and self._cam_raw_result is not None,
+            "gait120" in selected and self._g120_raw_result is not None,
+            "myometrics" in selected and self._myo_cycle_set is not None and self._myo_cycle_set.n_cycles > 0,
+        ])
+        self._btn_compare.setEnabled(selected_loaded >= 1)
+        if selected_loaded >= 1:
             self._on_run_comparison()
+        else:
+            self._glw.clear()
+            self._plot_items.clear()
+            self._glw.addPlot().setTitle("Select at least one loaded dataset")
+            self._btn_export.setEnabled(False)
+            self._lbl_stats.setText("—")
+            self._lbl_status.setText("No dataset selected")
+            self._lbl_status.setStyleSheet("color: grey; font-style: italic;")
 
     def _on_run_comparison(self) -> None:
         all_profiles: dict[str, dict[str, np.ndarray]] = {}
+        selected = set(self._selected_dataset_keys())
 
-        if self._cam_raw_result is not None:
+        if "camargo" in selected and self._cam_raw_result is not None:
             p = _camargo_to_profiles(self._cam_raw_result)
             if p:
                 all_profiles["camargo"] = p
 
-        if self._g120_raw_result is not None:
+        if "gait120" in selected and self._g120_raw_result is not None:
             p = _gait120_to_profiles(self._g120_raw_result)
             if p:
                 all_profiles["gait120"] = p
 
-        if self._myo_cycle_set is not None and self._myo_cycle_set.n_cycles > 0:
+        if (
+            "myometrics" in selected
+            and self._myo_cycle_set is not None
+            and self._myo_cycle_set.n_cycles > 0
+        ):
             p = _myo_to_profiles(self._myo_cycle_set)
             if p:
                 all_profiles["myometrics"] = p
 
-        if len(all_profiles) < 2:
+        if len(all_profiles) == 0:
+            self._glw.clear()
+            self._plot_items.clear()
+            self._glw.addPlot().setTitle("No profile data under current dataset selection")
+            self._btn_export.setEnabled(False)
+            self._lbl_stats.setText("No channels available")
             return
 
         # Peak-normalize each channel in each dataset independently
@@ -498,6 +643,7 @@ class Page5Compare(QWidget):
         x = np.linspace(0, 100, 101)
         n_rows = max(1, int(np.ceil(len(channels) / _N_COLS)))
         normalize = self._chk_norm.isChecked()
+        subtitle_color = "#bbb" if self._is_dark else "#555"
 
         # Pairwise CCC — only computed for channels present in both datasets of a pair
         ccc_by_pair: dict[tuple[str, str], dict[str, float]] = {}
@@ -551,7 +697,7 @@ class Page5Compare(QWidget):
             title_html = f"<b>{display_name}</b>"
             if ccc_parts:
                 title_html += (
-                    "<br><span style='font-size:7pt;color:#555;'>"
+                    f"<br><span style='font-size:7pt;color:{subtitle_color};'>"
                     + "  ".join(ccc_parts)
                     + "</span>"
                 )
@@ -581,6 +727,7 @@ class Page5Compare(QWidget):
             "Comparison: " + "  ·  ".join(_DATASET_LABELS[ds] for ds in datasets)
         )
         self._lbl_status.setStyleSheet("color: #444;")
+        self._apply_plot_theme()
 
     # ──────────────────────────────────────────────────────────────────────
     # Export
@@ -595,3 +742,19 @@ class Page5Compare(QWidget):
         )
         if path:
             self._glw.grab().save(path)
+
+    def set_theme(self, dark: bool) -> None:
+        self._is_dark = dark
+        self._glw.setBackground("#1b1b1b" if dark else "w")
+        self._lbl_stats.setStyleSheet("color: #bbb;" if dark else "color: #555;")
+        self._apply_plot_theme()
+
+    def _apply_plot_theme(self) -> None:
+        if not self._plot_items:
+            return
+        pen = pg.mkPen("#ddd" if self._is_dark else "#222")
+        for pi in self._plot_items:
+            for axis_name in ("left", "bottom"):
+                axis = pi.getAxis(axis_name)
+                axis.setPen(pen)
+                axis.setTextPen(pen)

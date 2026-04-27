@@ -59,6 +59,7 @@ class Page1Timeline(QWidget):
         self._regions: list[pg.LinearRegionItem] = []
         self._channel_checks: dict[str, QCheckBox] = {}
         self._region_updating = False
+        self._is_dark = False
         self._reprocess_timer = QTimer(self)
         self._reprocess_timer.setSingleShot(True)
         self._reprocess_timer.setInterval(60)
@@ -373,6 +374,7 @@ class Page1Timeline(QWidget):
 
             self._update_range_label(t0, t1)
         self._refresh_cycle_markers()
+        self._apply_plot_theme()
 
     def _on_region_changed(self) -> None:
         if self._region_updating or not self._regions:
@@ -514,3 +516,19 @@ class Page1Timeline(QWidget):
             )
 
         self._txt_norm_stats.setHtml("<br/>".join(lines))
+
+    def set_theme(self, dark: bool) -> None:
+        self._is_dark = dark
+        self._glw.setBackground("#1b1b1b" if dark else "w")
+        self._lbl_range.setStyleSheet("color: #bbb;" if dark else "color: #555;")
+        self._apply_plot_theme()
+
+    def _apply_plot_theme(self) -> None:
+        if not self._plot_items:
+            return
+        pen = pg.mkPen("#ddd" if self._is_dark else "#222")
+        for pi in self._plot_items:
+            for axis_name in ("left", "bottom"):
+                axis = pi.getAxis(axis_name)
+                axis.setPen(pen)
+                axis.setTextPen(pen)

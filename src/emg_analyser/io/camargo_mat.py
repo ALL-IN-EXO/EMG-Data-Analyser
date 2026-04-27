@@ -107,11 +107,25 @@ def load_gc_table(path: Path) -> dict[str, np.ndarray]:
     _, data = load_table(path)
     out: dict[str, np.ndarray] = {}
     lower_to_key = {k.lower(): k for k in data.keys()}
+    time_key = next(
+        (k for k in ("time", "Time", "Header") if k in data),
+        lower_to_key.get("time") or lower_to_key.get("header"),
+    )
+    time_s = (
+        np.asarray(data[time_key], dtype=float).ravel()
+        if time_key is not None else np.array([])
+    )
 
     for canonical in ("HeelStrike", "ToeOff", "HeelStrike2", "CycleTime"):
         key = canonical if canonical in data else lower_to_key.get(canonical.lower())
         if key is not None:
-            out[canonical] = np.asarray(data[key], dtype=float).ravel()
+            raw = np.asarray(data[key], dtype=float).ravel()
+            if canonical in ("HeelStrike", "ToeOff"):
+                phase_events = _phase_wrap_events(raw, time_s)
+                if phase_events.size >= 2:
+                    out[canonical] = phase_events
+                    continue
+            out[canonical] = _sanitize_event_array(raw)
     return out
 
 
@@ -173,3 +187,50 @@ def _to_str(v) -> str:
         if v.dtype == object and v.size == 1:
             return _to_str(v.item())
     return str(v)
+
+
+def _sanitize_event_array(arr: np.ndarray) -> np.ndarray:
+    out = np.asarray(arr, dtype=float).ravel()
+    out = out[np.isfinite(out)]
+    if out.size == 0:
+        return out
+    out = np.sort(out)
+    if out.size > 1:
+        keep = np.r_[True, np.diff(out) > 1e-9]
+        out = out[keep]
+    return out
+
+
+def _phase_wrap_events(phase: np.ndarray, time_s: np.ndarray) -> np.ndarray:
+    """Extract event times from a 0..100 phase trajectory by wrap detection."""
+    ph = np.asarray(phase, dtype=float).ravel()
+    tt = np.asarray(time_s, dtype=float).ravel()
+    if ph.size < 10 or tt.size != ph.size:
+        return np.array([])
+
+    valid = np.isfinite(ph) & np.isfinite(tt)
+    if valid.sum() < 10:
+        return np.array([])
+    ph = ph[valid]
+    tt = tt[valid]
+
+    lo, hi = float(np.min(ph)), float(np.max(ph))
+    if lo < -5.0 or hi > 105.0:
+        return np.array([])
+
+    d = np.diff(ph)
+    # phase wrap: either a strong negative jump, or near-100 -> near-0 transition
+    wrap_idx = np.where((d <= -30.0) | ((ph[:-1] >= 80.0) & (ph[1:] <= 20.0)))[0] + 1
+    if wrap_idx.size < 2:
+        return np.array([])
+
+    events = np.sort(tt[wrap_idx])
+    if events.size <= 1:
+        return events
+
+    # Suppress duplicate wraps from jitter: keep events at least 150 ms apart.
+    keep = [events[0]]
+    for t in events[1:]:
+        if t - keep[-1] >= 0.15:
+            keep.append(t)
+    return np.asarray(keep, dtype=float)

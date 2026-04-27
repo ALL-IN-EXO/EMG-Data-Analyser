@@ -109,6 +109,29 @@ def _extract_cycles(
     )
 
 
+def _event_times_to_sample_indices(
+    trial: Trial, event_times: np.ndarray | list[float]
+) -> list[int]:
+    """Map event times (s) to sample indices on trial.t, handling non-zero t0."""
+    if trial.n_samples <= 1:
+        return []
+
+    ev = np.asarray(event_times, dtype=float).ravel()
+    ev = ev[np.isfinite(ev)]
+    if ev.size == 0:
+        return []
+
+    t0 = float(trial.t[0])
+    t1 = float(trial.t[-1])
+    ev = ev[(ev >= t0) & (ev <= t1)]
+    if ev.size == 0:
+        return []
+
+    idx = np.searchsorted(trial.t, ev, side="left")
+    idx = np.clip(idx, 0, trial.n_samples - 1).astype(int)
+    return [int(i) for i in np.unique(idx)]
+
+
 def _normalize_cycles_task_env95(cycle_set: CycleSet) -> CycleSet:
     """Divide each channel's (N, 101) matrix by the 95th-percentile of its mean."""
     new_cycles: dict[str, np.ndarray] = {}
@@ -183,10 +206,9 @@ class HeelStrikeSegmenter:
         if len(hs) < 2:
             return AutocorrSegmenter().segment(trial, pipeline_cfg, seg_cfg)
 
-        boundaries = sorted(
-            [int(t * trial.fs) for t in hs
-             if 0 <= int(t * trial.fs) < trial.n_samples]
-        )
+        boundaries = _event_times_to_sample_indices(trial, hs)
+        if len(boundaries) < 2:
+            return AutocorrSegmenter().segment(trial, pipeline_cfg, seg_cfg)
         cs = _extract_cycles(
             trial,
             pipeline_cfg,

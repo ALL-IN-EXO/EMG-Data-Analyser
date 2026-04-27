@@ -164,9 +164,22 @@ class CamargoThread(QThread):
                     trial = self._adapter.load_trial(handle)
                     if channels is None:
                         channels = list(trial.channels.keys())
+                    if internal_cfg.method == "heelstrike":
+                        hs = np.asarray(trial.events.get("heel_strike", []), dtype=float).ravel()
+                        if hs.size < 2:
+                            self.logMessage.emit(
+                                f"[WARN] {subj}/{handle.trial_id}: "
+                                "heelstrike events missing/invalid, fallback to autocorr"
+                            )
                     cs = gait_mod.segment(trial, self._pipeline_cfg, internal_cfg)
                     if cs.n_cycles > 0:
                         per_trial.append(cs)
+                    elif internal_cfg.method == "heelstrike":
+                        self.logMessage.emit(
+                            f"[WARN] {subj}/{handle.trial_id}: "
+                            "0 cycles after heelstrike segmentation "
+                            f"(period {internal_cfg.period_min_s:.2f}-{internal_cfg.period_max_s:.2f}s)"
+                        )
                     self.logMessage.emit(
                         f"[INFO] {subj}/{handle.trial_id} — {cs.n_cycles} cycles"
                     )

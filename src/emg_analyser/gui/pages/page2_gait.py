@@ -45,6 +45,7 @@ class Page2GaitCycle(QWidget):
         self._trial: Trial | None = None
         self._cycle_set: CycleSet | None = None
         self._plot_items: list[pg.PlotItem] = []
+        self._is_dark = False
         self._seg_timer = QTimer(self)
         self._seg_timer.setSingleShot(True)
         self._seg_timer.setInterval(80)
@@ -284,6 +285,7 @@ class Page2GaitCycle(QWidget):
                 self._draw_individuals(pi, mat, x, color)
 
             self._plot_items.append(pi)
+        self._apply_plot_theme()
 
     def _draw_individuals(
         self,
@@ -305,6 +307,22 @@ class Page2GaitCycle(QWidget):
     def _redraw_individuals(self) -> None:
         if self._cycle_set is not None:
             self._build_cycle_plots(self._cycle_set)
+
+    def set_theme(self, dark: bool) -> None:
+        self._is_dark = dark
+        self._glw.setBackground("#1b1b1b" if dark else "w")
+        self._lbl_stats.setStyleSheet("color: #bbb;" if dark else "color: #555;")
+        self._apply_plot_theme()
+
+    def _apply_plot_theme(self) -> None:
+        if not self._plot_items:
+            return
+        pen = pg.mkPen("#ddd" if self._is_dark else "#222")
+        for pi in self._plot_items:
+            for axis_name in ("left", "bottom"):
+                axis = pi.getAxis(axis_name)
+                axis.setPen(pen)
+                axis.setTextPen(pen)
 
     # ------------------------------------------------------------------
     def _emit_seg_config(self) -> None:

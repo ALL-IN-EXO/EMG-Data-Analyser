@@ -24,6 +24,30 @@ python3 run.py
 PYTHONPATH=src python3 -m emg_analyser
 ```
 
+#### macOS 打开崩溃（`NSOpenPanel` / `bus error`）排查
+
+若你在 mac 上看到类似：
+
+- `The class 'NSOpenPanel' overrides the method identifier`
+- `zsh: bus error ... python3`
+
+优先检查 Python 架构是否与机器一致（Apple Silicon 请避免 `/usr/local/bin/python3` 的 x86 解释器）：
+
+```bash
+python3 -c "import platform,sys; print(platform.machine(), sys.executable)"
+```
+
+- Apple Silicon 推荐输出 `arm64`，解释器路径通常是 `/opt/homebrew/bin/python3`。
+- 若输出 `x86_64`，建议换 arm64 Python 后重建环境再安装依赖：
+
+```bash
+/opt/homebrew/bin/python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install PyQt5 pyqtgraph numpy scipy pandas
+python3 run.py
+```
+
 ---
 
 ### 2. 页面 1：Raw Timeline（自采数据）

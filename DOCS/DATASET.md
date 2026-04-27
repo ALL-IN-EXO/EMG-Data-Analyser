@@ -183,16 +183,17 @@ Each `emg/*.mat` stores a MATLAB `table` with one row per sample (≈ 143 s × 1
 
 ### 2.5 Gait Event `.mat` File Contents (`gcRight/`)
 
-Paired `gcRight/<trial_name>.mat` stores a MATLAB `table` with one row per gait cycle:
+Paired `gcRight/<trial_name>.mat` is also a MATLAB `table`, but there are two observed formats:
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `HeelStrike` | double | Time (s) of right heel strike |
-| `ToeOff` | double | Time (s) of right toe-off |
-| `HeelStrike2` | double | Time (s) of next right heel strike |
-| `CycleTime` | double | Stride duration (s) |
+1. Event-list format (each row is one cycle event), e.g. `HeelStrike/ToeOff` already in seconds.
+2. Phase-trajectory format (common in downloaded Camargo release), where:
+   - `Header` is time (s),
+   - `HeelStrike` / `ToeOff` are 0–100 gait-phase trajectories that wrap around at events.
 
-The `CamargoAdapter` converts `HeelStrike` → `trial.events["heel_strike"]` (seconds array).
+The loader handles both formats. For phase trajectories, it detects phase wrap points and converts them into event times in seconds, then stores:
+
+- `trial.events["heel_strike"]`
+- `trial.events["toe_off"]`
 
 ### 2.6 Subject Demographics (`SubjectInfo.mat`)
 

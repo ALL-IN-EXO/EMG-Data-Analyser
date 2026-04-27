@@ -24,6 +24,30 @@ python3 run.py
 PYTHONPATH=src python3 -m emg_analyser
 ```
 
+#### macOS crash (`NSOpenPanel` / `bus error`) troubleshooting
+
+If macOS shows messages like:
+
+- `The class 'NSOpenPanel' overrides the method identifier`
+- `zsh: bus error ... python3`
+
+first verify that Python architecture matches your machine (on Apple Silicon, avoid `/usr/local/bin/python3` x86 builds):
+
+```bash
+python3 -c "import platform,sys; print(platform.machine(), sys.executable)"
+```
+
+- On Apple Silicon, prefer `arm64` with Python from `/opt/homebrew/bin/python3`.
+- If it prints `x86_64`, recreate the venv with arm64 Python and reinstall:
+
+```bash
+/opt/homebrew/bin/python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install PyQt5 pyqtgraph numpy scipy pandas
+python3 run.py
+```
+
 ---
 
 ### 1.2 Page 1: Raw Timeline (Self-Collected Data)

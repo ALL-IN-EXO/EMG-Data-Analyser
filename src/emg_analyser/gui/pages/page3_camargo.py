@@ -76,6 +76,7 @@ class Page3Camargo(QWidget):
         self._analysis_thread: CamargoThread | None = None
         self._analysis_seq = 0
         self._plot_items: list[pg.PlotItem] = []
+        self._is_dark = False
         self._last_result: dict | None = None
         self._muscle_checks: dict[str, QCheckBox] = {}
         self._updating_muscle_checks = False
@@ -667,6 +668,7 @@ class Page3Camargo(QWidget):
             f"muscles={len(selected_channels)}  ·  norm={norm}  ·  indiv={indiv}"
         )
         self._btn_export.setEnabled(True)
+        self._apply_plot_theme()
 
     def _plot_single_subject(
         self,
@@ -756,6 +758,22 @@ class Page3Camargo(QWidget):
         )
         if path:
             self._glw.grab().save(path)
+
+    def set_theme(self, dark: bool) -> None:
+        self._is_dark = dark
+        self._glw.setBackground("#1b1b1b" if dark else "w")
+        self._lbl_stats.setStyleSheet("color: #bbb;" if dark else "color: #555;")
+        self._apply_plot_theme()
+
+    def _apply_plot_theme(self) -> None:
+        if not self._plot_items:
+            return
+        pen = pg.mkPen("#ddd" if self._is_dark else "#222")
+        for pi in self._plot_items:
+            for axis_name in ("left", "bottom"):
+                axis = pi.getAxis(axis_name)
+                axis.setPen(pen)
+                axis.setTextPen(pen)
 
     @staticmethod
     def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
