@@ -1,4 +1,5 @@
 from __future__ import annotations
+import sys
 from html import escape
 from pathlib import Path
 
@@ -259,9 +260,19 @@ class Page1Timeline(QWidget):
     # ------------------------------------------------------------------
     # Folder handling
     # ------------------------------------------------------------------
+    @staticmethod
+    def _dialog_options() -> QFileDialog.Options:
+        opts = QFileDialog.Options()
+        if sys.platform == "darwin":
+            opts |= QFileDialog.DontUseNativeDialog
+        return opts
+
     def _on_pick_data_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(
-            self, "Select Data Folder", self._data_path or _DEFAULT_DATA
+            self,
+            "Select Data Folder",
+            self._data_path or _DEFAULT_DATA,
+            options=self._dialog_options(),
         )
         if path:
             self._data_path = path
@@ -271,7 +282,10 @@ class Page1Timeline(QWidget):
 
     def _on_pick_mvc_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(
-            self, "Select MVC Folder", self._mvc_path or _DEFAULT_MVC
+            self,
+            "Select MVC Folder",
+            self._mvc_path or _DEFAULT_MVC,
+            options=self._dialog_options(),
         )
         if path:
             self._mvc_path = path

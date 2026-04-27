@@ -1,6 +1,7 @@
 from __future__ import annotations
 from html import escape
 import random
+import sys
 
 import numpy as np
 import pyqtgraph as pg
@@ -339,8 +340,11 @@ class Page2GaitCycle(QWidget):
     def _export_png(self) -> None:
         from PyQt5.QtWidgets import QFileDialog
         from PyQt5.QtGui import QPixmap
+        opts = QFileDialog.Options()
+        if sys.platform == "darwin":
+            opts |= QFileDialog.DontUseNativeDialog
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export PNG", "gait_cycles.png", "PNG (*.png)"
+            self, "Export PNG", "gait_cycles.png", "PNG (*.png)", options=opts
         )
         if path:
             pixmap = self._glw.grab()

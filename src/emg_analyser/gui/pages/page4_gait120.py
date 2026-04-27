@@ -10,6 +10,7 @@ Features:
 """
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
@@ -234,10 +235,18 @@ class Page4Gait120(QWidget):
     # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
+    @staticmethod
+    def _dialog_options() -> QFileDialog.Options:
+        opts = QFileDialog.Options()
+        if sys.platform == "darwin":
+            opts |= QFileDialog.DontUseNativeDialog
+        return opts
+
     def _on_browse(self) -> None:
         path = QFileDialog.getExistingDirectory(
             self, "Select Gait120 dataset root",
-            self._root_path or _DEFAULT_ROOT
+            self._root_path or _DEFAULT_ROOT,
+            options=self._dialog_options(),
         )
         if path:
             self._root_path = path
@@ -540,8 +549,13 @@ class Page4Gait120(QWidget):
 
     # ------------------------------------------------------------------
     def _export_png(self) -> None:
+        opts = self._dialog_options()
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export PNG", "gait120_cycles.png", "PNG (*.png)"
+            self,
+            "Export PNG",
+            "gait120_cycles.png",
+            "PNG (*.png)",
+            options=opts,
         )
         if path:
             self._glw.grab().save(path)

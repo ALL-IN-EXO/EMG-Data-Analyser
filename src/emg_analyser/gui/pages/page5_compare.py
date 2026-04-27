@@ -11,6 +11,7 @@ Concordance Correlation Coefficient (CCC) is computed per channel.
 """
 from __future__ import annotations
 
+import sys
 from itertools import combinations
 
 import numpy as np
@@ -586,8 +587,11 @@ class Page5Compare(QWidget):
     # ──────────────────────────────────────────────────────────────────────
 
     def _export_png(self) -> None:
+        opts = QFileDialog.Options()
+        if sys.platform == "darwin":
+            opts |= QFileDialog.DontUseNativeDialog
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export PNG", "comparison.png", "PNG (*.png)"
+            self, "Export PNG", "comparison.png", "PNG (*.png)", options=opts
         )
         if path:
             self._glw.grab().save(path)
