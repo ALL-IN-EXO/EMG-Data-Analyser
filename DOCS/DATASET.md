@@ -9,8 +9,9 @@ See [`DOCS/WORKFLOW.md`](WORKFLOW.md) for how each dataset plugs into the adapte
 
 1. [Self-Collected Dataset — MyoMetrics CSV](#1-self-collected-dataset--myometrics-csv)
 2. [Public Dataset — Camargo 2021](#2-public-dataset--camargo-2021)
-3. [Cross-Dataset Channel Mapping](#3-cross-dataset-channel-mapping)
-4. [Unified `Trial` Representation](#4-unified-trial-representation)
+3. [Public Dataset — Gait120](#3-public-dataset--gait120)
+4. [Cross-Dataset Channel Mapping](#4-cross-dataset-channel-mapping)
+5. [Unified `Trial` Representation](#5-unified-trial-representation)
 
 ---
 
@@ -241,7 +242,116 @@ Trial(
 
 ---
 
-## 3. Cross-Dataset Channel Mapping
+## 3. Public Dataset — Gait120
+
+### 3.1 Overview
+
+| Property | Value |
+|----------|-------|
+| Subjects | 10 able-bodied adults (S001–S010) |
+| Channels | 12 right-leg surface EMG |
+| Sampling rate | 2 000 Hz (raw); pre-interpolated to 101 points (0–100 % gait cycle) |
+| Signal unit | MVC fraction (0–1, normalised inside the dataset) |
+| File format | MATLAB `.mat` (MCOS-backed table objects, v5) |
+| Locomotion modes | 7 (see §3.3) |
+| Gait events | Embedded as `TargetFrame` indices in the motion-capture reference frame |
+
+### 3.2 Directory Layout
+
+```
+Gait120_001_to_010/
+├── S001/
+│   ├── EMG/
+│   │   ├── RawData.mat          # raw 2 kHz signals, per-trial MCOS tables
+│   │   └── ProcessedData.mat    # envelope, filtered, normalised, and
+│   │                            # gait-cycle-interpolated (101 pt) data
+│   ├── JointAngle/              # OpenSim .mot files (joint angles)
+│   │   ├── LevelWalking/Trial01/step01.mot …
+│   │   └── …
+│   └── MotionCapture/           # marker trajectories (.trc files, 100 Hz)
+│       ├── LevelWalking/TRC/Trial01/Step01.trc …
+│       └── …
+├── S002/ … S010/
+```
+
+### 3.3 Locomotion Modes
+
+| Key in `.mat` | Description | Steps per trial |
+|---------------|-------------|-----------------|
+| `LevelWalking` | Overground level walking | 2 |
+| `StairAscent` | Stair climbing, ascent | 2 |
+| `StairDescent` | Stair climbing, descent | 2 |
+| `SlopeAscent` | Inclined ramp, ascent | 2 |
+| `SlopeDescent` | Inclined ramp, descent | 2 |
+| `SitToStand` | Sit-to-stand transition | 1 |
+| `StandToSit` | Stand-to-sit transition | 1 |
+
+Each mode contains up to 5 trials. `AvailableTrialIdx` (inside the struct) lists which trial indices are actually present for a given subject.
+
+### 3.4 EMG Channel Names (fixed order, right leg)
+
+| Index | Key in `.mat` | Muscle |
+|-------|--------------|--------|
+| 0 | `VastusLateralis` | Vastus lateralis |
+| 1 | `RectusFemoris` | Rectus femoris |
+| 2 | `VastusMedialis` | Vastus medialis |
+| 3 | `TibialisAnterior` | Tibialis anterior |
+| 4 | `BicepsFemoris` | Biceps femoris |
+| 5 | `Semitendinosus` | Semitendinosus |
+| 6 | `GastrocnemuisMedialis` | Gastrocnemius medialis *(typo preserved from source)* |
+| 7 | `GastrocnemiusLateralis` | Gastrocnemius lateralis |
+| 8 | `SoleusMedialis` | Soleus medialis |
+| 9 | `SoleusLateralis` | Soleus lateralis |
+| 10 | `PeroneusLongus` | Peroneus longus |
+| 11 | `PeroneusBrevis` | Peroneus brevis |
+
+### 3.5 `RawData.mat` Structure
+
+| Field path | Type | Description |
+|------------|------|-------------|
+| `EMGs_info.fs` | double | EMG sampling rate (2 000 Hz) |
+| `Markers_info.fs` | double | Motion-capture sampling rate (100 Hz) |
+| `<Mode>.nTrials` | uint8 | Total number of trials for this mode |
+| `<Mode>.AvailableTrialIdx` | uint array | 1-based indices of existing trials |
+| `<Mode>.Trial<N>.EMGs_raw` | MCOS table | Raw 2 kHz signal, 12 channels |
+| `<Mode>.Trial<N>.TotalFrame` | uint16 (1×2) | [start, end] motion-capture frame of the full trial |
+| `<Mode>.Trial<N>.nSteps` | uint8 | Number of gait steps segmented in the trial |
+| `<Mode>.Trial<N>.Step<S>.TargetFrame` | uint16 (1×2) | [start, end] motion-capture frame of gait step S |
+| `<Mode>.MVC_raw` | struct | MVC contraction recordings (5 × 1 trials), same table format |
+
+### 3.6 `ProcessedData.mat` Structure
+
+| Field path | Type | Description |
+|------------|------|-------------|
+| `<Mode>.Trial<N>.MVCs` | double (1×12) | MVC peak values per channel (Volts) |
+| `<Mode>.Trial<N>.Step<S>.EMGs_env` | MCOS table | Linear envelope (2 000 Hz), normalised to MVC |
+| `<Mode>.Trial<N>.Step<S>.EMGs_filt` | MCOS table | Band-pass filtered signal (2 000 Hz), normalised |
+| `<Mode>.Trial<N>.Step<S>.EMGs_norm` | MCOS table | Normalised envelope at native 2 000 Hz duration |
+| `<Mode>.Trial<N>.Step<S>.EMGs_interpolated` | MCOS table | Normalised envelope resampled to **101 points** (0–100 % gait cycle) |
+
+### 3.7 MCOS Decoding
+
+Both `.mat` files store EMG tables as MCOS objects (same internal format as the Camargo dataset). The loader (`gait120_mat.py`) decodes them via the `__function_workspace__` subsystem:
+
+```python
+opaque = step["EMGs_interpolated"][0]   # MatlabOpaque element
+idx4   = int(opaque["arr"].ravel()[4])  # table slot index (1-based)
+ws_pos = 2 + (idx4 - 1) * 7            # position in workspace arr
+data   = workspace_arr[ws_pos]          # object array of 12 channel arrays
+```
+
+### 3.8 Loader Output (`gait120_mat.load_mode_steps`)
+
+```python
+load_mode_steps(path: Path, mode: str) -> dict[str, np.ndarray]
+# Returns {channel_name: np.ndarray(n_steps, 101)}
+# n_steps = nTrials * nSteps_per_trial (typically 10 for locomotion, 5 for transitions)
+# Values are MVC fraction (0–1 range)
+```
+
+---
+
+## 4. Cross-Dataset Channel Mapping
 
 The **Compare View** aligns channels from different datasets using a shared **canonical name**. Canonical names follow Camargo's lowercase column names (underscores, no spaces).
 
@@ -263,7 +373,7 @@ The Compare View only plots canonical channels present in **all** selected trial
 
 ---
 
-## 4. Unified `Trial` Representation
+## 5. Unified `Trial` Representation
 
 Both adapters produce the same `Trial` dataclass, which is the only type the GUI, processing layer, and export services ever consume:
 
@@ -296,4 +406,4 @@ For cross-dataset comparison, `task_env95` is the recommended normalisation beca
 
 ---
 
-*Last updated: 2026-04-24*
+*Last updated: 2026-04-27*

@@ -189,3 +189,62 @@ class CamargoThread(QThread):
             "by_subject": by_subject,
             "channels": channels or [],
         })
+
+
+class Gait120Thread(QThread):
+    """Load and aggregate Gait120 ProcessedData for selected subjects and mode.
+
+    Emits done({'by_subject': dict[subject, dict[channel, np.ndarray(n,101)]],
+                'channels': list[str], 'mode': str}).
+    """
+
+    progress = pyqtSignal(int, int)
+    done = pyqtSignal(dict)
+    error = pyqtSignal(str)
+    logMessage = pyqtSignal(str)
+
+    def __init__(
+        self,
+        root,
+        subjects: list[str],
+        mode: str,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._root = root
+        self._subjects = subjects
+        self._mode = mode
+
+    def run(self) -> None:
+        try:
+            self._run()
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+    def _run(self) -> None:
+        from pathlib import Path
+        from ..io.gait120_mat import load_mode_steps, processed_data_path, CHANNEL_NAMES
+
+        root = Path(self._root)
+        by_subject: dict[str, dict[str, np.ndarray]] = {}
+        total = len(self._subjects)
+
+        for i, subject in enumerate(self._subjects):
+            path = processed_data_path(root, subject)
+            try:
+                data = load_mode_steps(path, self._mode)
+                n_steps = next(iter(data.values())).shape[0] if data else 0
+                self.logMessage.emit(
+                    f"[INFO] {subject}/{self._mode} — {n_steps} steps"
+                )
+                if n_steps > 0:
+                    by_subject[subject] = data
+            except Exception as exc:
+                self.logMessage.emit(f"[WARN] {subject}: {exc}")
+            self.progress.emit(i + 1, total)
+
+        self.done.emit({
+            "by_subject": by_subject,
+            "channels": CHANNEL_NAMES,
+            "mode": self._mode,
+        })

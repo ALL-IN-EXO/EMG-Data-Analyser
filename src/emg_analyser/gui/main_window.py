@@ -11,6 +11,7 @@ from ..io.base import TrialHandle
 from .pages.page1_timeline import Page1Timeline
 from .pages.page2_gait import Page2GaitCycle
 from .pages.page3_camargo import Page3Camargo
+from .pages.page4_gait120 import Page4Gait120
 from .log_dock import LogDock
 
 
@@ -39,9 +40,11 @@ class MainWindow(QMainWindow):
         self._page1 = Page1Timeline()
         self._page2 = Page2GaitCycle()
         self._page3 = Page3Camargo()
+        self._page4 = Page4Gait120()
         self._tabs.addTab(self._page1, "1 · Raw Timeline")
         self._tabs.addTab(self._page2, "2 · Gait Cycle Segmentation")
         self._tabs.addTab(self._page3, "3 · Camargo Dataset")
+        self._tabs.addTab(self._page4, "4 · Gait120 Dataset")
         self._tabs.setTabEnabled(1, False)  # disabled until a trial is loaded
         self.setCentralWidget(self._tabs)
 
@@ -70,6 +73,9 @@ class MainWindow(QMainWindow):
 
         # Page 3 log
         self._page3.logMessage.connect(self._log.append)
+
+        # Page 4 log
+        self._page4.logMessage.connect(self._log.append)
 
         # Tab switch → auto-trigger segmentation
         self._tabs.currentChanged.connect(self._on_tab_changed)
